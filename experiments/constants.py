@@ -5,9 +5,9 @@
 
 # Note that the paths used in `scripts/run_*.sh` are still
 # hard-coded to `/export/home/`
-WEIGHT_DECAY = 0.005
+WEIGHT_DECAY = 0
 
-MNLI_MODEL_PATH = None
+MNLI_MODEL_PATH = "bert-base-uncased"
 HANS_MODEL_PATH = None
 MNLI2_MODEL_PATH = None
 Amazon_MODEL_PATH = None
@@ -31,7 +31,8 @@ MNLI_ANLI_FAISS_INDEX_PATH = None
 MNLI_TRAIN_INPUT_COLLECTIONS_PATH = None
 
 HANS_DATA_DIR = None
-GLUE_DATA_DIR = None
+# changed this:
+GLUE_DATA_DIR = "glue_data/MNLI"
 ANLI_DATA_DIR = None
 Amazon_DATA_DIR = None
 
@@ -53,10 +54,6 @@ DEFAULT_INFLUENCE_HPARAMS = {
     # `train_on_task_name`
     "mnli": {
         # `eval_task_name`
-        "mnli": {
-            "damp": 5e-3,
-            "scale": 1e4,
-            "num_samples": 1000
-        }
+        "mnli": {"damp": 5e-3, "scale": 1e4, "num_samples": 1000}
     }
 }

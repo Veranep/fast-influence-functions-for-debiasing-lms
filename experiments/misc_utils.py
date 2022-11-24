@@ -6,6 +6,7 @@
 import os
 import torch
 import numpy as np
+
 # from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.sampler import SequentialSampler, RandomSampler
@@ -18,7 +19,8 @@ from transformers import (
     GlueDataTrainingArguments,
     Trainer,
     DataCollator,
-    default_data_collator)
+    default_data_collator,
+)
 
 from influence_utils import glue_utils
 from experiments import constants
@@ -26,44 +28,44 @@ from experiments.data_utils import CustomGlueDataset
 
 
 def sort_dict_keys_by_vals(d: Dict[int, float]) -> List[int]:
-    sorted_items = sorted(list(d.items()),
-                          key=lambda pair: pair[1])
+    sorted_items = sorted(list(d.items()), key=lambda pair: pair[1])
     return [pair[0] for pair in sorted_items]
 
 
 def sort_dict_keys_by_vals_with_conditions(
-        d: Dict[int, float],
-        condition_func: Callable[[Tuple[int, float]], bool]
+    d: Dict[int, float], condition_func: Callable[[Tuple[int, float]], bool]
 ) -> List[int]:
 
-    sorted_items = sorted(list(d.items()),
-                          key=lambda pair: pair[1])
-    return [pair[0] for pair in sorted_items
-            if condition_func(pair)]
+    sorted_items = sorted(list(d.items()), key=lambda pair: pair[1])
+    return [pair[0] for pair in sorted_items if condition_func(pair)]
 
 
 def get_helpful_harmful_indices_from_influences_dict(
-        d: Dict[int, float],
-        n: Optional[int] = None,
+    d: Dict[int, float],
+    n: Optional[int] = None,
 ) -> Tuple[List[int], List[int]]:
 
     helpful_indices = sort_dict_keys_by_vals_with_conditions(
-        d, condition_func=lambda k_v: k_v[1] < 0.0)
+        d, condition_func=lambda k_v: k_v[1] < 0.0
+    )
     harmful_indices = sort_dict_keys_by_vals_with_conditions(
-        d, condition_func=lambda k_v: k_v[1] > 0.0)[::-1]
+        d, condition_func=lambda k_v: k_v[1] > 0.0
+    )[::-1]
 
     if n is not None:
         if len(helpful_indices) < n:
             raise ValueError(
                 f"`helpful_indices` have only "
                 f"{len(helpful_indices)} elememts "
-                f"whereas {n} is needed")
+                f"whereas {n} is needed"
+            )
 
         if len(harmful_indices) < n:
             raise ValueError(
                 f"`harmful_indices` have only "
                 f"{len(harmful_indices)} elememts "
-                f"whereas {n} is needed")
+                f"whereas {n} is needed"
+            )
 
         helpful_indices = helpful_indices[:n]
         harmful_indices = harmful_indices[:n]
@@ -76,12 +78,6 @@ def compute_BERT_CLS_feature(
     input_ids=None,
     attention_mask=None,
     token_type_ids=None,
-    position_ids=None,
-    head_mask=None,
-    inputs_embeds=None,
-    labels=None,
-    output_attentions=None,
-    output_hidden_states=None,
 ) -> torch.FloatTensor:
     r"""
     labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
@@ -97,26 +93,21 @@ def compute_BERT_CLS_feature(
         input_ids,
         attention_mask=attention_mask,
         token_type_ids=token_type_ids,
-        position_ids=position_ids,
-        head_mask=head_mask,
-        inputs_embeds=inputs_embeds,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states,
     )
-
-    pooled_output = outputs[1]
-
-    return model.dropout(pooled_output)
+    output = outputs[0][:, -1, :]
+    return output
+    # return model.dropout(output)
 
 
 def create_tokenizer_and_model(
-        model_name_or_path: str,
-        freeze_parameters: bool = True
+    model_name_or_path: str, freeze_parameters: bool = True
 ) -> Tuple[BertTokenizer, BertForSequenceClassification]:
     if model_name_or_path is None:
         raise ValueError
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name_or_path
+    )
 
     model.eval()
     if freeze_parameters is True:
@@ -126,12 +117,14 @@ def create_tokenizer_and_model(
 
 
 def create_datasets(
-        task_name: str,
-        tokenizer: BertTokenizer,
-        data_dir: Optional[str] = None,
-        create_test_dataset: bool = False,
-) -> Union[Tuple[CustomGlueDataset, CustomGlueDataset],
-           Tuple[CustomGlueDataset, CustomGlueDataset, CustomGlueDataset]]:
+    task_name: str,
+    tokenizer: BertTokenizer,
+    data_dir: Optional[str] = None,
+    create_test_dataset: bool = False,
+) -> Union[
+    Tuple[CustomGlueDataset, CustomGlueDataset],
+    Tuple[CustomGlueDataset, CustomGlueDataset, CustomGlueDataset],
+]:
     if task_name not in ["mnli", "mnli-2", "hans", "amazon", "anli"]:
         raise ValueError(f"Unrecognized task {task_name}")
 
@@ -146,42 +139,40 @@ def create_datasets(
             data_dir = constants.ANLI_DATA_DIR
 
     data_args = GlueDataTrainingArguments(
-        task_name=task_name,
-        data_dir=data_dir,
-        max_seq_length=128)
+        task_name=task_name, data_dir=data_dir, max_seq_length=128
+    )
 
     train_dataset = CustomGlueDataset(
-        args=data_args,
-        tokenizer=tokenizer,
-        mode="train")
+        args=data_args, tokenizer=tokenizer, mode="train"
+    )
 
     eval_dataset = CustomGlueDataset(
-        args=data_args,
-        tokenizer=tokenizer,
-        mode="dev")
+        args=data_args, tokenizer=tokenizer, mode="dev"
+    )
 
     if create_test_dataset is False:
         return train_dataset, eval_dataset
     else:
         test_dataset = CustomGlueDataset(
-            args=data_args,
-            tokenizer=tokenizer,
-            mode="test")
+            args=data_args, tokenizer=tokenizer, mode="test"
+        )
 
         return train_dataset, eval_dataset, test_dataset
 
 
-def predict(trainer: Trainer,
-            model: torch.nn.Module,
-            inputs: Dict[str, Union[torch.Tensor, Any]],
-            ) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
+def predict(
+    trainer: Trainer,
+    model: torch.nn.Module,
+    inputs: Dict[str, Union[torch.Tensor, Any]],
+) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
 
     if trainer.args.past_index >= 0:
         raise ValueError
 
     has_labels = any(
-        inputs.get(k) is not None for k in
-        ["labels", "lm_labels", "masked_lm_labels"])
+        inputs.get(k) is not None
+        for k in ["labels", "lm_labels", "masked_lm_labels"]
+    )
 
     for k, v in inputs.items():
         if isinstance(v, torch.Tensor):
@@ -189,6 +180,8 @@ def predict(trainer: Trainer,
 
     step_eval_loss = None
     with torch.no_grad():
+        # added:
+        inputs["labels"] -= 1
         outputs = model(**inputs)
         if has_labels:
             step_eval_loss, logits = outputs[:2]
@@ -207,11 +200,12 @@ def predict(trainer: Trainer,
     return preds, label_ids, step_eval_loss
 
 
-def get_dataloader(dataset: CustomGlueDataset,
-                   batch_size: int,
-                   random: bool = False,
-                   data_collator: Optional[DataCollator] = None
-                   ) -> DataLoader:
+def get_dataloader(
+    dataset: CustomGlueDataset,
+    batch_size: int,
+    random: bool = False,
+    data_collator: Optional[DataCollator] = None,
+) -> DataLoader:
     if data_collator is None:
         data_collator = default_data_collator
 
@@ -238,14 +232,14 @@ def remove_file_if_exists(file_name: str) -> None:
 
 
 def is_prediction_correct(
-        trainer: Trainer,
-        model: torch.nn.Module,
-        inputs: Dict[str, Union[torch.Tensor, Any]]) -> bool:
+    trainer: Trainer,
+    model: torch.nn.Module,
+    inputs: Dict[str, Union[torch.Tensor, Any]],
+) -> bool:
 
     preds, label_ids, step_eval_loss = predict(
-        trainer=trainer,
-        model=model,
-        inputs=inputs)
+        trainer=trainer, model=model, inputs=inputs
+    )
 
     if preds.shape[0] != 1:
         raise ValueError("This function only works on instances.")
@@ -254,8 +248,7 @@ def is_prediction_correct(
 
 
 def move_inputs_to_device(
-        inputs: Dict[str, Any],
-        device: torch.device
+    inputs: Dict[str, Any], device: torch.device
 ) -> None:
     for k, v in inputs.items():
         if isinstance(v, torch.Tensor):

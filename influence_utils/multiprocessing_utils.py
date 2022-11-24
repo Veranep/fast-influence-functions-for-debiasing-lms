@@ -14,7 +14,11 @@
 
 import torch.multiprocessing as torch_mp
 from torch.multiprocessing.spawn import (
-    _python_version_check, _wrap, multiprocessing, warnings)
+    # _python_version_check,
+    _wrap,
+    multiprocessing,
+    warnings,
+)
 
 
 # Note: [start_processes]
@@ -25,8 +29,10 @@ from torch.multiprocessing.spawn import (
 # general enough, and backends like XLA can reuse them in Colab notebooks as well.
 # Currently we only add this API first, we can consider adding it to documentation as
 # needed in the future.
-def start_processes(fn, list_of_args, nprocs=1, join=True, daemon=False, start_method='spawn'):
-    _python_version_check()
+def start_processes(
+    fn, list_of_args, nprocs=1, join=True, daemon=False, start_method="spawn"
+):
+    # _python_version_check()
     mp = multiprocessing.get_context(start_method)
     error_queues = []
     processes = []
@@ -50,7 +56,9 @@ def start_processes(fn, list_of_args, nprocs=1, join=True, daemon=False, start_m
         pass
 
 
-def spawn(fn, list_of_args, nprocs=1, join=True, daemon=False, start_method='spawn'):
+def spawn(
+    fn, list_of_args, nprocs=1, join=True, daemon=False, start_method="spawn"
+):
     r"""Spawns ``nprocs`` processes that run ``fn`` with ``args``.
     If one of the processes exits with a non-zero exit status, the
     remaining processes are killed and an exception is raised with the
@@ -77,9 +85,13 @@ def spawn(fn, list_of_args, nprocs=1, join=True, daemon=False, start_method='spa
         None if ``join`` is ``True``,
         :class:`~ProcessContext` if ``join`` is ``False``
     """
-    if start_method != 'spawn':
-        msg = ('This method only supports start_method=spawn (got: %s).\n'
-               'To use a different start_method use:\n\t\t'
-               ' torch.multiprocessing.start_process(...)' % start_method)
+    if start_method != "spawn":
+        msg = (
+            "This method only supports start_method=spawn (got: %s).\n"
+            "To use a different start_method use:\n\t\t"
+            " torch.multiprocessing.start_process(...)" % start_method
+        )
         warnings.warn(msg)
-    return start_processes(fn, list_of_args, nprocs, join, daemon, start_method='spawn')
+    return start_processes(
+        fn, list_of_args, nprocs, join, daemon, start_method="spawn"
+    )

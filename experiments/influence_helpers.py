@@ -14,8 +14,8 @@ from influence_utils import nn_influence_utils
 
 
 def load_faiss_index(
-        trained_on_task_name: str,
-        train_task_name: str,
+    trained_on_task_name: str,
+    train_task_name: str,
 ) -> faiss_utils.FAISSIndex:
 
     if trained_on_task_name not in ["mnli", "mnli-2", "hans", "amazon"]:
@@ -59,9 +59,9 @@ def load_faiss_index(
 
 
 def select_s_test_config(
-        trained_on_task_name: str,
-        train_task_name: str,
-        eval_task_name: str,
+    trained_on_task_name: str,
+    train_task_name: str,
+    eval_task_name: str,
 ) -> Tuple[float, float, int]:
 
     if trained_on_task_name != train_task_name:
@@ -70,12 +70,20 @@ def select_s_test_config(
         # of `trained_on_task_name` and `eval_task_name`
         # would be fine, so not raising issues here for now.
         if not (
-            all([trained_on_task_name == "mnli-2",
-                 train_task_name == "hans",
-                 eval_task_name == "hans"]) or
-            all([trained_on_task_name == "mnli",
-                 train_task_name == "anli",
-                 eval_task_name == "anli"])
+            all(
+                [
+                    trained_on_task_name == "mnli-2",
+                    train_task_name == "hans",
+                    eval_task_name == "hans",
+                ]
+            )
+            or all(
+                [
+                    trained_on_task_name == "mnli",
+                    train_task_name == "anli",
+                    eval_task_name == "anli",
+                ]
+            )
         ):
             raise ValueError("Unsupported as of now")
 
@@ -131,18 +139,19 @@ def select_s_test_config(
 
 
 def compute_influences_simplified(
-        k: int,
-        faiss_index: faiss_utils.FAISSIndex,
-        model: torch.nn.Module,
-        inputs: Dict[str, torch.Tensor],
-        train_dataset: torch.utils.data.DataLoader,
-        use_parallel: bool,
-        s_test_damp: float,
-        s_test_scale: float,
-        s_test_num_samples: int,
-        device_ids: Optional[List[int]] = None,
-        precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
-        faiss_index_use_mean_features_as_query: bool = False,
+    k: int,
+    faiss_index: faiss_utils.FAISSIndex,
+    model: torch.nn.Module,
+    inputs: Dict[str, torch.Tensor],
+    train_dataset: torch.utils.data.DataLoader,
+    use_parallel: bool,
+    s_test_damp: float,
+    s_test_scale: float,
+    s_test_num_samples: int,
+    data_collator=None,
+    device_ids: Optional[List[int]] = None,
+    precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
+    faiss_index_use_mean_features_as_query: bool = False,
 ) -> Dict[int, float]:
 
     # Make sure indices are sorted according to distances
@@ -152,25 +161,45 @@ def compute_influences_simplified(
     #     ] != KNN_indices)]
 
     params_filter = [
-        n for n, p in model.named_parameters()
-        if not p.requires_grad]
+        n for n, p in model.named_parameters() if not p.requires_grad
+    ]
 
-    weight_decay_ignores = [
-        "bias",
-        "LayerNorm.weight"] + [
-        n for n, p in model.named_parameters()
-        if not p.requires_grad]
+    weight_decay_ignores = ["bias", "LayerNorm.weight"] + [
+        n for n, p in model.named_parameters() if not p.requires_grad
+    ]
 
     if faiss_index is not None:
-        features = misc_utils.compute_BERT_CLS_feature(model, **inputs)
+        try:
+            if type(inputs[0][0]) == str:
+                (
+                    _,
+                    _,
+                    input_ids,
+                    attention_mask,
+                    token_type_ids,
+                    _,
+                ) = inputs
+                input_ids = torch.stack(input_ids).transpose(0, 1)
+                attention_mask = torch.stack(attention_mask).transpose(0, 1)
+                token_type_ids = torch.stack(token_type_ids).transpose(0, 1)
+                inputs_faiss = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "token_type_ids": token_type_ids,
+                }
+        except:
+            pass
+
+        device = torch.device("cuda")
+        for i, v in inputs_faiss.items():
+            inputs_faiss[i] = v.to(device)
+        features = misc_utils.compute_BERT_CLS_feature(model, **inputs_faiss)
         features = features.cpu().detach().numpy()
 
         if faiss_index_use_mean_features_as_query is True:
             # We use the mean embedding as the final query here
             features = features.mean(axis=0, keepdims=True)
-
-        KNN_distances, KNN_indices = faiss_index.search(
-            k=k, queries=features)
+        KNN_distances, KNN_indices = faiss_index.search(k=k, queries=features)
     else:
         KNN_indices = None
 
@@ -179,14 +208,22 @@ def compute_influences_simplified(
         batch_train_data_loader = misc_utils.get_dataloader(
             train_dataset,
             batch_size=1,
-            random=True)
+            data_collator=data_collator,
+            random=True,
+        )
 
         instance_train_data_loader = misc_utils.get_dataloader(
             train_dataset,
             batch_size=1,
-            random=False)
+            data_collator=data_collator,
+            random=False,
+        )
 
-        influences, _, _ = nn_influence_utils.compute_influences(
+        (
+            influences,
+            train_inputs_collections,
+            _,
+        ) = nn_influence_utils.compute_influences(
             n_gpu=1,
             device=torch.device("cuda"),
             batch_train_data_loader=batch_train_data_loader,
@@ -200,18 +237,24 @@ def compute_influences_simplified(
             s_test_scale=s_test_scale,
             s_test_num_samples=s_test_num_samples,
             train_indices_to_include=KNN_indices,
-            precomputed_s_test=precomputed_s_test)
+            precomputed_s_test=precomputed_s_test,
+        )
     else:
         if device_ids is None:
             raise ValueError("`device_ids` cannot be None")
 
-        influences, _ = parallel.compute_influences_parallel(
+        (
+            influences,
+            train_inputs_collections,
+            _,
+        ) = parallel.compute_influences_parallel(
             # Avoid clash with main process
             device_ids=device_ids,
             train_dataset=train_dataset,
             batch_size=1,
             model=model,
             test_inputs=inputs,
+            data_collator=data_collator,
             params_filter=params_filter,
             weight_decay=constants.WEIGHT_DECAY,
             weight_decay_ignores=weight_decay_ignores,
@@ -220,6 +263,7 @@ def compute_influences_simplified(
             s_test_num_samples=s_test_num_samples,
             train_indices_to_include=KNN_indices,
             return_s_test=False,
-            debug=False)
+            debug=False,
+        )
 
-    return influences
+    return influences, train_inputs_collections

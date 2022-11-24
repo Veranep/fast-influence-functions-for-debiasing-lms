@@ -9,19 +9,23 @@ from typing import Optional, Tuple
 
 
 class FAISSIndex(object):
-    def __init__(self,
-                 d: Optional[int] = None,
-                 description: Optional[str] = "Flat",
-                 index: Optional[faiss.Index] = None) -> None:
+    def __init__(
+        self,
+        d: Optional[int] = None,
+        description: Optional[str] = "Flat",
+        index: Optional[faiss.Index] = None,
+    ) -> None:
         if index is None:
             index = faiss.index_factory(d, description)
         self._index = index
 
-    def search(self,
-               k: int,
-               key: Optional[int] = None,
-               query: Optional[np.ndarray] = None,
-               queries: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+    def search(
+        self,
+        k: int,
+        key: Optional[int] = None,
+        query: Optional[np.ndarray] = None,
+        queries: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Search Nearest Neighbor
 
         Args:
@@ -39,11 +43,9 @@ class FAISSIndex(object):
             indices [Array <n, k>]: Return indices.
 
         """
-        num_inputs_provided = sum([
-            key is not None,
-            query is not None,
-            queries is not None
-        ])
+        num_inputs_provided = sum(
+            [key is not None, query is not None, queries is not None]
+        )
         if num_inputs_provided != 1:
             raise ValueError
 
@@ -72,8 +74,7 @@ class FAISSIndex(object):
 
     def get_n(self, key_0: int, key_i: int) -> np.ndarray:
         """Returns Array <n, d>"""
-        return self._index.reconstruct_n(
-            n0=key_0, ni=key_i)
+        return self._index.reconstruct_n(n0=key_0, ni=key_i)
 
     def save(self, file_name) -> None:
         faiss.write_index(self._index, file_name)

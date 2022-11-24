@@ -15,25 +15,69 @@ def count_parameters(model: torch.nn.Module) -> int:
 
 
 def convert_ids_to_string(
-        tokenizer: PreTrainedTokenizer,
-        ids: torch.LongTensor) -> str:
+    tokenizer: PreTrainedTokenizer, ids: torch.LongTensor
+) -> str:
     tokens = tokenizer.convert_ids_to_tokens(ids)
     return tokenizer.convert_tokens_to_string(tokens)
 
 
 def get_loss_with_weight_decay(
-        device: torch.device,
-        n_gpu: int,
-        model: torch.nn.Module,
-        inputs: Dict[str, torch.Tensor],
-        weight_decay: Optional[float],
-        weight_decay_ignores: Optional[List[str]]) -> float:
+    device: torch.device,
+    n_gpu: int,
+    model: torch.nn.Module,
+    inputs: Dict[str, torch.Tensor],
+    weight_decay: Optional[float],
+    weight_decay_ignores: Optional[List[str]],
+) -> float:
 
     # model.train()
+    # added by me for StereoSet
+    stereoset = False
+    try:
+        if type(inputs[0][0]) == str:
+            stereoset = True
+            (
+                sentence_id,
+                next_token,
+                input_ids,
+                attention_mask,
+                token_type_ids,
+                target_tokens,
+            ) = inputs
+            input_ids = torch.stack(input_ids).transpose(0, 1)
+            attention_mask = torch.stack(attention_mask).transpose(0, 1)
+            token_type_ids = (
+                torch.stack(token_type_ids).to(device).transpose(0, 1)
+            )
+            labels = input_ids.detach().clone()
+            # do this in a nicer way:
+            labels[labels == 103] = next_token
+            inputs = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
+                "labels": labels,
+            }
+    except:
+        pass
+
     for k, v in inputs.items():
         inputs[k] = v.to(device)
+    if stereoset:
+        # do this in a nicer way:
+        mask_idxs = input_ids == 103
+        next_token = next_token.to(device)
+        outputs_orig = model(
+            inputs["input_ids"],
+            inputs["attention_mask"],
+            inputs["token_type_ids"],
+        )
+        outputs_orig = outputs_orig[0].softmax(dim=-1)
+        outputs_orig = outputs_orig[mask_idxs]
+        # print(outputs_orig.index_select(1, next_token).diag())
 
     outputs = model(**inputs)
+
     # model outputs are always tuple in transformers (see doc)
     loss = outputs[0]
 
@@ -46,28 +90,32 @@ def get_loss_with_weight_decay(
     # this for the loss here.
     if weight_decay is not None:
         no_decay = (
-            weight_decay_ignores
-            if weight_decay_ignores
-            is not None else [])
+            weight_decay_ignores if weight_decay_ignores is not None else []
+        )
 
-        weight_decay_loss = torch.cat([
-            p.square().view(-1)
-            for n, p in model.named_parameters()
-            if not any(nd in n for nd in no_decay)
-        ]).sum() * weight_decay
+        weight_decay_loss = (
+            torch.cat(
+                [
+                    p.square().view(-1)
+                    for n, p in model.named_parameters()
+                    if not any(nd in n for nd in no_decay)
+                ]
+            ).sum()
+            * weight_decay
+        )
         loss = loss + weight_decay_loss
 
     return loss
 
 
 def compute_gradients(
-        device: torch.device,
-        n_gpu: int,
-        model: torch.nn.Module,
-        inputs: Dict[str, torch.Tensor],
-        params_filter: Optional[List[str]],
-        weight_decay: Optional[float],
-        weight_decay_ignores: Optional[List[str]]
+    device: torch.device,
+    n_gpu: int,
+    model: torch.nn.Module,
+    inputs: Dict[str, torch.Tensor],
+    params_filter: Optional[List[str]],
+    weight_decay: Optional[float],
+    weight_decay_ignores: Optional[List[str]],
 ) -> List[torch.FloatTensor]:
 
     if params_filter is None:
@@ -75,29 +123,34 @@ def compute_gradients(
 
     model.zero_grad()
     loss = get_loss_with_weight_decay(
-        device=device, n_gpu=n_gpu,
-        model=model, inputs=inputs,
+        device=device,
+        n_gpu=n_gpu,
+        model=model,
+        inputs=inputs,
         weight_decay=weight_decay,
-        weight_decay_ignores=weight_decay_ignores)
+        weight_decay_ignores=weight_decay_ignores,
+    )
 
     return torch.autograd.grad(
         outputs=loss,
         inputs=[
-            param for name, param
-            in model.named_parameters()
-            if name not in params_filter],
-        create_graph=True)
+            param
+            for name, param in model.named_parameters()
+            if name not in params_filter
+        ],
+        create_graph=True,
+    )
 
 
 def compute_hessian_vector_products(
-        device: torch.device,
-        n_gpu: int,
-        model: torch.nn.Module,
-        inputs: Dict[str, torch.Tensor],
-        vectors: torch.FloatTensor,
-        params_filter: Optional[List[str]],
-        weight_decay: Optional[float],
-        weight_decay_ignores: Optional[List[str]]
+    device: torch.device,
+    n_gpu: int,
+    model: torch.nn.Module,
+    inputs: Dict[str, torch.Tensor],
+    vectors: torch.FloatTensor,
+    params_filter: Optional[List[str]],
+    weight_decay: Optional[float],
+    weight_decay_ignores: Optional[List[str]],
 ) -> List[torch.FloatTensor]:
 
     if params_filter is None:
@@ -105,46 +158,52 @@ def compute_hessian_vector_products(
 
     model.zero_grad()
     loss = get_loss_with_weight_decay(
-        model=model, n_gpu=n_gpu,
-        device=device, inputs=inputs,
+        model=model,
+        n_gpu=n_gpu,
+        device=device,
+        inputs=inputs,
         weight_decay=weight_decay,
-        weight_decay_ignores=weight_decay_ignores)
+        weight_decay_ignores=weight_decay_ignores,
+    )
 
     grad_tuple = torch.autograd.grad(
         outputs=loss,
         inputs=[
-            param for name, param
-            in model.named_parameters()
-            if name not in params_filter],
-        create_graph=True)
+            param
+            for name, param in model.named_parameters()
+            if name not in params_filter
+        ],
+        create_graph=True,
+    )
 
     model.zero_grad()
     grad_grad_tuple = torch.autograd.grad(
         outputs=grad_tuple,
         inputs=[
-            param for name, param
-            in model.named_parameters()
-            if name not in params_filter],
+            param
+            for name, param in model.named_parameters()
+            if name not in params_filter
+        ],
         grad_outputs=vectors,
-        only_inputs=True
+        only_inputs=True,
     )
 
     return grad_grad_tuple
 
 
 def compute_s_test(
-        n_gpu: int,
-        device: torch.device,
-        model: torch.nn.Module,
-        test_inputs: Dict[str, torch.Tensor],
-        train_data_loaders: List[torch.utils.data.DataLoader],
-        params_filter: Optional[List[str]],
-        weight_decay: Optional[float],
-        weight_decay_ignores: Optional[List[str]],
-        damp: float,
-        scale: float,
-        num_samples: Optional[int] = None,
-        verbose: bool = True,
+    n_gpu: int,
+    device: torch.device,
+    model: torch.nn.Module,
+    test_inputs: Dict[str, torch.Tensor],
+    train_data_loaders: List[torch.utils.data.DataLoader],
+    params_filter: Optional[List[str]],
+    weight_decay: Optional[float],
+    weight_decay_ignores: Optional[List[str]],
+    damp: float,
+    scale: float,
+    num_samples: Optional[int] = None,
+    verbose: bool = True,
 ) -> List[torch.FloatTensor]:
 
     v = compute_gradients(
@@ -154,7 +213,8 @@ def compute_s_test(
         inputs=test_inputs,
         params_filter=params_filter,
         weight_decay=weight_decay,
-        weight_decay_ignores=weight_decay_ignores)
+        weight_decay_ignores=weight_decay_ignores,
+    )
 
     # Technically, it's hv^-1
     last_estimate = list(v).copy()
@@ -170,7 +230,8 @@ def compute_s_test(
                     inputs=inputs,
                     params_filter=params_filter,
                     weight_decay=weight_decay,
-                    weight_decay_ignores=weight_decay_ignores)
+                    weight_decay_ignores=weight_decay_ignores,
+                )
                 # Recursively caclulate h_estimate
                 # https://github.com/dedeswim/pytorch_influence_functions/blob/master/pytorch_influence_functions/influence_functions/hvp_grad.py#L118
                 with torch.no_grad():
@@ -184,7 +245,9 @@ def compute_s_test(
                     new_estimate_norm = new_estimate[0].norm().item()
                     last_estimate_norm = last_estimate[0].norm().item()
                     estimate_norm_diff = new_estimate_norm - last_estimate_norm
-                    pbar.set_description(f"{new_estimate_norm:.2f} | {estimate_norm_diff:.2f}")
+                    pbar.set_description(
+                        f"{new_estimate_norm:.2f} | {estimate_norm_diff:.2f}"
+                    )
 
                 cumulative_num_samples += 1
                 last_estimate = new_estimate
@@ -204,35 +267,38 @@ def compute_s_test(
     # We only allocate `num_samples` data to reduce communication overhead.
     # Should probably make this more consistent sometime.
     if cumulative_num_samples not in [num_samples, num_samples + 2]:
-        raise ValueError(f"cumulative_num_samples={cumulative_num_samples} f"
-                         f"but num_samples={num_samples}: Untested Territory")
+        raise ValueError(
+            f"cumulative_num_samples={cumulative_num_samples} f"
+            f"but num_samples={num_samples}: Untested Territory"
+        )
 
     return inverse_hvp
 
 
 def compute_grad_zs(
-        n_gpu: int,
-        device: torch.device,
-        model: torch.nn.Module,
-        data_loader: torch.utils.data.DataLoader,
-        params_filter: Optional[List[str]] = None,
-        weight_decay: Optional[float] = None,
-        weight_decay_ignores: Optional[List[str]] = None,
+    n_gpu: int,
+    device: torch.device,
+    model: torch.nn.Module,
+    data_loader: torch.utils.data.DataLoader,
+    params_filter: Optional[List[str]] = None,
+    weight_decay: Optional[float] = None,
+    weight_decay_ignores: Optional[List[str]] = None,
 ) -> List[List[torch.FloatTensor]]:
 
     if weight_decay_ignores is None:
-        weight_decay_ignores = [
-            "bias",
-            "LayerNorm.weight"]
+        weight_decay_ignores = ["bias", "LayerNorm.weight"]
 
     grad_zs = []
     for inputs in data_loader:
         grad_z = compute_gradients(
-            n_gpu=n_gpu, device=device,
-            model=model, inputs=inputs,
+            n_gpu=n_gpu,
+            device=device,
+            model=model,
+            inputs=inputs,
             params_filter=params_filter,
             weight_decay=weight_decay,
-            weight_decay_ignores=weight_decay_ignores)
+            weight_decay_ignores=weight_decay_ignores,
+        )
         with torch.no_grad():
             grad_zs.append([X.cpu() for X in grad_z])
 
@@ -240,21 +306,21 @@ def compute_grad_zs(
 
 
 def compute_influences(
-        n_gpu: int,
-        device: torch.device,
-        model: torch.nn.Module,
-        test_inputs: Dict[str, torch.Tensor],
-        batch_train_data_loader: torch.utils.data.DataLoader,
-        instance_train_data_loader: torch.utils.data.DataLoader,
-        params_filter: Optional[List[str]] = None,
-        weight_decay: Optional[float] = None,
-        weight_decay_ignores: Optional[List[str]] = None,
-        s_test_damp: float = 3e-5,
-        s_test_scale: float = 1e4,
-        s_test_num_samples: Optional[int] = None,
-        s_test_iterations: int = 1,
-        precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
-        train_indices_to_include: Optional[Union[np.ndarray, List[int]]] = None,
+    n_gpu: int,
+    device: torch.device,
+    model: torch.nn.Module,
+    test_inputs: Dict[str, torch.Tensor],
+    batch_train_data_loader: torch.utils.data.DataLoader,
+    instance_train_data_loader: torch.utils.data.DataLoader,
+    params_filter: Optional[List[str]] = None,
+    weight_decay: Optional[float] = None,
+    weight_decay_ignores: Optional[List[str]] = None,
+    s_test_damp: float = 3e-5,
+    s_test_scale: float = 1e4,
+    s_test_num_samples: Optional[int] = None,
+    s_test_iterations: int = 1,
+    precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
+    train_indices_to_include: Optional[Union[np.ndarray, List[int]]] = None,
 ) -> Tuple[Dict[int, float], Dict[int, Dict], List[torch.FloatTensor]]:
 
     if s_test_iterations < 1:
@@ -262,9 +328,7 @@ def compute_influences(
 
     if weight_decay_ignores is None:
         # https://github.com/huggingface/transformers/blob/v3.0.2/src/transformers/trainer.py#L325
-        weight_decay_ignores = [
-            "bias",
-            "LayerNorm.weight"]
+        weight_decay_ignores = ["bias", "LayerNorm.weight"]
 
     if precomputed_s_test is not None:
         s_test = precomputed_s_test
@@ -282,25 +346,24 @@ def compute_influences(
                 weight_decay_ignores=weight_decay_ignores,
                 damp=s_test_damp,
                 scale=s_test_scale,
-                num_samples=s_test_num_samples)
+                num_samples=s_test_num_samples,
+            )
 
             # Sum the values across runs
             if s_test is None:
                 s_test = _s_test
             else:
-                s_test = [
-                    a + b for a, b in zip(s_test, _s_test)
-                ]
+                s_test = [a + b for a, b in zip(s_test, _s_test)]
         # Do the averaging
         s_test = [a / s_test_iterations for a in s_test]
 
     influences = {}
     train_inputs_collections = {}
     for index, train_inputs in enumerate(tqdm(instance_train_data_loader)):
-
         # Skip indices when a subset is specified to be included
         if (train_indices_to_include is not None) and (
-                index not in train_indices_to_include):
+            index not in train_indices_to_include
+        ):
             continue
 
         grad_z = compute_gradients(
@@ -310,14 +373,12 @@ def compute_influences(
             inputs=train_inputs,
             params_filter=params_filter,
             weight_decay=weight_decay,
-            weight_decay_ignores=weight_decay_ignores)
+            weight_decay_ignores=weight_decay_ignores,
+        )
 
         with torch.no_grad():
-            influence = [
-                - torch.sum(x * y)
-                for x, y in zip(grad_z, s_test)]
+            influence = [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
 
         influences[index] = sum(influence).item()
         train_inputs_collections[index] = train_inputs
-
     return influences, train_inputs_collections, s_test
