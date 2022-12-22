@@ -130,6 +130,7 @@ def compute_s_test_and_influence(
 
     # Approx. 4-5sec for moving model to a specified GPU
     model.to(devices[rank])
+    print("*** COMPUTE S TEST ***")
     s_test = _compute_s_test(
         rank=rank,
         model=model,
@@ -144,7 +145,7 @@ def compute_s_test_and_influence(
         s_test_scale=s_test_scale,
         s_test_num_samples=s_test_num_samples,
     )
-
+    print("*** COMPUTE INFLUENCES ***")
     influences, train_inputs_collections = _compute_influences(
         rank=rank,
         model=model,
@@ -214,6 +215,7 @@ def compute_influences_parallel(
     # Passing the smaller subset of training data to child
     # processes can significantly reduce the overhead of
     # spawning new child processes.
+    print("*** PREPARE SMALL DATALOADERS ***")
     dataloders = prepare_small_dataloaders(
         dataset=train_dataset,
         random=random,
@@ -222,14 +224,14 @@ def compute_influences_parallel(
         num_examples_per_dataset=s_test_num_samples,
         data_collator=data_collator,
     )
-
+    print("*** PREPARE SCATTERED INPUTS AND INDICES ***")
     scattered_inputs, scattered_indices = prepare_scattered_inputs_and_indices(
         dataset=train_dataset,
         device_ids=device_ids,
         indices_to_include=train_indices_to_include,
         data_collator=data_collator,
     )
-
+    print("*** START PROCESSES ***")
     devices = [torch.device(f"cuda:{device_id}") for device_id in device_ids]
     tmpfiles = [tempfile.NamedTemporaryFile() for _ in range(len(device_ids))]
     process_args = [
@@ -358,13 +360,13 @@ def prepare_scattered_inputs_and_indices(
     data_collator=None,
 ) -> Tuple[List[List[Any]], List[List[int]]]:
     """Scatter the data into devices"""
-
     indices_list = []
     # inputs_collections = {}
     inputs_collections_list = []
     instance_dataloader = misc_utils.get_dataloader(
         dataset=dataset, batch_size=1, data_collator=data_collator
     )
+
     for index, train_inputs in enumerate(tqdm(instance_dataloader)):
 
         # Skip indices when a subset is specified to be included
@@ -462,10 +464,22 @@ class InfluenceHelper(torch.nn.Module):
             weight_decay=self._weight_decay,
             weight_decay_ignores=self._weight_decay_ignores,
         )
-
         with torch.no_grad():
+            # Original
             influence = [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
-
+            # RelatIF edit 1
+            # influence = [
+            #    -torch.sum(
+            #        (x * y).div((x * y).norm(p=2, dim=-1, keepdim=True))
+            #    )
+            #    for x, y in zip(grad_z, s_test)
+            # ]
+            # RelatIF edit 2
+            # gives out of memory error
+            influence = torch.tensor(influence)
+            influence = influence.div(
+                influence.norm(p=2, dim=-1, keepdim=True)
+            )
         return sum(influence)
 
     def forward(

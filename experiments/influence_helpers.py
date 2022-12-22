@@ -148,6 +148,7 @@ def compute_influences_simplified(
     s_test_damp: float,
     s_test_scale: float,
     s_test_num_samples: int,
+    weight_decay: float,
     data_collator=None,
     device_ids: Optional[List[int]] = None,
     precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
@@ -169,36 +170,21 @@ def compute_influences_simplified(
     ]
 
     if faiss_index is not None:
-        try:
-            if type(inputs[0][0]) == str:
-                (
-                    _,
-                    _,
-                    input_ids,
-                    attention_mask,
-                    token_type_ids,
-                    _,
-                ) = inputs
-                input_ids = torch.stack(input_ids).transpose(0, 1)
-                attention_mask = torch.stack(attention_mask).transpose(0, 1)
-                token_type_ids = torch.stack(token_type_ids).transpose(0, 1)
-                inputs_faiss = {
-                    "input_ids": input_ids,
-                    "attention_mask": attention_mask,
-                    "token_type_ids": token_type_ids,
-                }
-        except:
-            pass
-
         device = torch.device("cuda")
-        for i, v in inputs_faiss.items():
-            inputs_faiss[i] = v.to(device)
-        features = misc_utils.compute_BERT_CLS_feature(model, **inputs_faiss)
+        for i, v in inputs.items():
+            inputs[i] = v.to(device)
+        features = misc_utils.compute_BERT_CLS_feature(
+            model,
+            inputs["input_ids"],
+            inputs["attention_mask"],
+            inputs["token_type_ids"],
+        )
         features = features.cpu().detach().numpy()
 
         if faiss_index_use_mean_features_as_query is True:
             # We use the mean embedding as the final query here
             features = features.mean(axis=0, keepdims=True)
+        print("*** FAISS INDEX SEARCH ***")
         KNN_distances, KNN_indices = faiss_index.search(k=k, queries=features)
     else:
         KNN_indices = None
@@ -218,7 +204,7 @@ def compute_influences_simplified(
             data_collator=data_collator,
             random=False,
         )
-
+        print("*** COMPUTE INFLUENCES ***")
         (
             influences,
             train_inputs_collections,
@@ -231,7 +217,7 @@ def compute_influences_simplified(
             model=model,
             test_inputs=inputs,
             params_filter=params_filter,
-            weight_decay=constants.WEIGHT_DECAY,
+            weight_decay=weight_decay,
             weight_decay_ignores=weight_decay_ignores,
             s_test_damp=s_test_damp,
             s_test_scale=s_test_scale,
@@ -242,7 +228,7 @@ def compute_influences_simplified(
     else:
         if device_ids is None:
             raise ValueError("`device_ids` cannot be None")
-
+        print("*** COMPUTE PARALLEL INFLUENCES ***")
         (
             influences,
             train_inputs_collections,
@@ -256,7 +242,7 @@ def compute_influences_simplified(
             test_inputs=inputs,
             data_collator=data_collator,
             params_filter=params_filter,
-            weight_decay=constants.WEIGHT_DECAY,
+            weight_decay=weight_decay,
             weight_decay_ignores=weight_decay_ignores,
             s_test_damp=s_test_damp,
             s_test_scale=s_test_scale,

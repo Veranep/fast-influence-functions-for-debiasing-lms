@@ -31,56 +31,14 @@ def get_loss_with_weight_decay(
 ) -> float:
 
     # model.train()
-    # added by me for StereoSet
-    stereoset = False
-    try:
-        if type(inputs[0][0]) == str:
-            stereoset = True
-            (
-                sentence_id,
-                next_token,
-                input_ids,
-                attention_mask,
-                token_type_ids,
-                target_tokens,
-            ) = inputs
-            input_ids = torch.stack(input_ids).transpose(0, 1)
-            attention_mask = torch.stack(attention_mask).transpose(0, 1)
-            token_type_ids = (
-                torch.stack(token_type_ids).to(device).transpose(0, 1)
-            )
-            labels = input_ids.detach().clone()
-            # do this in a nicer way:
-            labels[labels == 103] = next_token
-            inputs = {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-                "labels": labels,
-            }
-    except:
-        pass
 
     for k, v in inputs.items():
         inputs[k] = v.to(device)
-    if stereoset:
-        # do this in a nicer way:
-        mask_idxs = input_ids == 103
-        next_token = next_token.to(device)
-        outputs_orig = model(
-            inputs["input_ids"],
-            inputs["attention_mask"],
-            inputs["token_type_ids"],
-        )
-        outputs_orig = outputs_orig[0].softmax(dim=-1)
-        outputs_orig = outputs_orig[mask_idxs]
-        # print(outputs_orig.index_select(1, next_token).diag())
 
     outputs = model(**inputs)
-
-    # model outputs are always tuple in transformers (see doc)
     loss = outputs[0]
 
+    # model outputs are always tuple in transformers (see doc)
     if n_gpu > 1:
         # mean() to average on multi-gpu parallel training
         loss = loss.mean()
