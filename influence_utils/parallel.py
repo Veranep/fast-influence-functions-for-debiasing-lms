@@ -64,11 +64,14 @@ def _compute_influences(
     rank: int,
     model: torch.nn.Module,
     s_test: List[torch.Tensor],
+    data_collator,
     scattered_inputs: List[Any],
     scattered_indices: List[int],
     params_filter: Optional[List[str]] = None,
     weight_decay: Optional[float] = None,
     weight_decay_ignores: Optional[List[str]] = None,
+    s_train_damp: float = 3e-5,
+    s_train_scale: float = 1e4,
 ) -> Dict[int, float]:
 
     wrapped_model = InfluenceHelper(
@@ -81,7 +84,13 @@ def _compute_influences(
         weight_decay_ignores=weight_decay_ignores,
     )
 
-    influences_list = wrapped_model(Xs=scattered_inputs, s_test=s_test)
+    influences_list = wrapped_model(
+        Xs=scattered_inputs,
+        s_test=s_test,
+        data_collator=data_collator,
+        s_train_damp=s_train_damp,
+        s_train_scale=s_train_scale,
+    )
 
     influences = {}
     train_inputs_collections = {}
@@ -104,6 +113,7 @@ def compute_s_test_and_influence(
     n_gpu: int,
     devices: List[torch.device],
     test_inputs: Dict[str, torch.Tensor],
+    data_collator,
     params_filter: Optional[List[str]] = None,
     weight_decay: Optional[float] = None,
     weight_decay_ignores: Optional[List[str]] = None,
@@ -150,11 +160,14 @@ def compute_s_test_and_influence(
         rank=rank,
         model=model,
         s_test=s_test,
+        data_collator=data_collator,
         scattered_inputs=scattered_inputs,
         scattered_indices=scattered_indices,
         params_filter=params_filter,
         weight_decay=weight_decay,
         weight_decay_ignores=weight_decay_ignores,
+        s_train_damp=s_test_damp,
+        s_train_scale=s_test_scale,
     )
 
     if log_stdin_and_stdout is True:
@@ -244,6 +257,7 @@ def compute_influences_parallel(
             1,  # n_gpu
             devices,
             test_inputs,
+            data_collator,
             params_filter,
             weight_decay,
             weight_decay_ignores,
@@ -452,7 +466,12 @@ class InfluenceHelper(torch.nn.Module):
         self,
         device: torch.device,
         X: Dict[str, torch.Tensor],
+        Xs: List[Dict[str, torch.Tensor]],
         s_test: List[torch.FloatTensor],
+        data_collator,
+        s_train_damp: float = 3e-5,
+        s_train_scale: float = 1e4,
+        s_train_num_samples: Optional[int] = None,
     ) -> torch.Tensor:
 
         grad_z = nn_influence_utils.compute_gradients(
@@ -464,28 +483,58 @@ class InfluenceHelper(torch.nn.Module):
             weight_decay=self._weight_decay,
             weight_decay_ignores=self._weight_decay_ignores,
         )
+        # Proper RelatIF
+        # dataset = SimpleDataset(Xs)
+        # dataloader = misc_utils.get_dataloader(
+        #     dataset=dataset,
+        #     batch_size=1,
+        #     random=False,
+        #     data_collator=data_collator,
+        # )
+        # s_train = nn_influence_utils.compute_s_test(
+        #     n_gpu=self._n_gpu,
+        #     device=device,
+        #     model=self.model,
+        #     test_inputs=X,
+        #     train_data_loaders=[dataloader],
+        #     params_filter=self._params_filter,
+        #     weight_decay=self._weight_decay,
+        #     weight_decay_ignores=self._weight_decay_ignores,
+        #     damp=s_train_damp,
+        #     scale=s_train_scale,
+        #     num_samples=s_train_num_samples,
+        # )
         with torch.no_grad():
             # Original
             influence = [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
             # RelatIF edit 1
             # influence = [
-            #    -torch.sum(
-            #        (x * y).div((x * y).norm(p=2, dim=-1, keepdim=True))
-            #    )
-            #    for x, y in zip(grad_z, s_test)
+            #     -torch.sum(
+            #         (x * y).div((x * y).norm(p=2, dim=-1, keepdim=True))
+            #     )
+            #     for x, y in zip(grad_z, s_test)
             # ]
             # RelatIF edit 2
-            # gives out of memory error
             influence = torch.tensor(influence)
             influence = influence.div(
                 influence.norm(p=2, dim=-1, keepdim=True)
             )
+            # Proper RelatIF
+            # influence = torch.tensor(
+            #     [
+            #         -torch.sum(x * y).div(z.norm(p=2, keepdim=False))
+            #         for x, y, z in zip(grad_z, s_test, s_train)
+            #     ]
+            # )
         return sum(influence)
 
     def forward(
         self,
         Xs: Union[Dict[str, torch.Tensor], List[Dict[str, torch.Tensor]]],
         s_test: List[torch.FloatTensor],
+        data_collator,
+        s_train_damp: float = 3e-5,
+        s_train_scale: float = 1e4,
     ) -> torch.FloatTensor:
 
         if self._mode in ["instance"]:
@@ -496,7 +545,14 @@ class InfluenceHelper(torch.nn.Module):
             device = Xs["labels"].device
             new_s_test = [x.to(device) for x in s_test]
             return self._compute_influence(
-                device=device, X=Xs, s_test=new_s_test
+                device=device,
+                X=Xs,
+                Xs=Xs,
+                s_test=new_s_test,
+                data_collator=data_collator,
+                s_train_damp=s_train_damp,
+                s_train_scale=s_train_scale,
+                s_train_num_samples=1,
             )
 
         else:
@@ -507,12 +563,17 @@ class InfluenceHelper(torch.nn.Module):
             influences = []
             device = Xs[0]["labels"].device
             new_s_test = [x.to(device) for x in s_test]
-            if self._progress_bar is True:
-                Xs = tqdm(Xs)
 
             influences = [
                 self._compute_influence(
-                    device=device, X=X, s_test=new_s_test  # noqa
+                    device=device,
+                    X=X,
+                    Xs=Xs,
+                    s_test=new_s_test,
+                    data_collator=data_collator,
+                    s_train_damp=s_train_damp,
+                    s_train_scale=s_train_scale,
+                    s_train_num_samples=len(Xs),  # noqa
                 )
                 for X in Xs
             ]

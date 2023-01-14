@@ -31,12 +31,22 @@ def get_loss_with_weight_decay(
 ) -> float:
 
     # model.train()
+    # id
+    i = False
+    if "id" in inputs:
+        id = inputs.pop("id")
+        i = True
 
     for k, v in inputs.items():
+        if len(v.shape) > 2:
+            v = v.squeeze(dim=0)
         inputs[k] = v.to(device)
 
     outputs = model(**inputs)
     loss = outputs[0]
+    # id
+    if i:
+        inputs["id"] = id
 
     # model outputs are always tuple in transformers (see doc)
     if n_gpu > 1:
