@@ -72,6 +72,7 @@ def _compute_influences(
     weight_decay_ignores: Optional[List[str]] = None,
     s_train_damp: float = 3e-5,
     s_train_scale: float = 1e4,
+    relat_if: Optional[str] = None,
 ) -> Dict[int, float]:
 
     wrapped_model = InfluenceHelper(
@@ -82,6 +83,7 @@ def _compute_influences(
         params_filter=params_filter,
         weight_decay=weight_decay,
         weight_decay_ignores=weight_decay_ignores,
+        relat_if=relat_if,
     )
 
     influences_list = wrapped_model(
@@ -122,6 +124,7 @@ def compute_s_test_and_influence(
     s_test_num_samples: Optional[int] = None,
     return_s_test: bool = False,
     log_stdin_and_stdout: bool = True,
+    relat_if: Optional[str] = None,
 ) -> Tuple[Dict[int, float], List[torch.FloatTensor]]:
 
     # Initialize
@@ -168,6 +171,7 @@ def compute_s_test_and_influence(
         weight_decay_ignores=weight_decay_ignores,
         s_train_damp=s_test_damp,
         s_train_scale=s_test_scale,
+        relat_if=relat_if,
     )
 
     if log_stdin_and_stdout is True:
@@ -220,6 +224,7 @@ def compute_influences_parallel(
     debug: bool = False,
     return_s_test: bool = False,
     train_indices_to_include: Optional[Union[np.ndarray, List[int]]] = None,
+    relat_if: Optional[str] = None,
 ) -> Tuple[Dict[int, float], Optional[List[torch.FloatTensor]]]:
 
     if s_test_num_samples is None:
@@ -266,6 +271,7 @@ def compute_influences_parallel(
             s_test_num_samples,
             return_s_test,
             True if debug is False else False,  # log_stdin_and_stdout
+            relat_if,
         )
         for process_index in range(len(device_ids))
     ]
@@ -443,6 +449,7 @@ class InfluenceHelper(torch.nn.Module):
         params_filter: Optional[List[str]] = None,
         weight_decay: Optional[float] = None,
         weight_decay_ignores: Optional[List[str]] = None,
+        relat_if: Optional[str] = None,
     ):
 
         super(InfluenceHelper, self).__init__()
@@ -461,6 +468,7 @@ class InfluenceHelper(torch.nn.Module):
         self._params_filter = params_filter
         self._weight_decay = weight_decay
         self._weight_decay_ignores = weight_decay_ignores
+        self._relat_if = relat_if
 
     def _compute_influence(
         self,
@@ -484,48 +492,58 @@ class InfluenceHelper(torch.nn.Module):
             weight_decay_ignores=self._weight_decay_ignores,
         )
         # Proper RelatIF
-        # dataset = SimpleDataset(Xs)
-        # dataloader = misc_utils.get_dataloader(
-        #     dataset=dataset,
-        #     batch_size=1,
-        #     random=False,
-        #     data_collator=data_collator,
-        # )
-        # s_train = nn_influence_utils.compute_s_test(
-        #     n_gpu=self._n_gpu,
-        #     device=device,
-        #     model=self.model,
-        #     test_inputs=X,
-        #     train_data_loaders=[dataloader],
-        #     params_filter=self._params_filter,
-        #     weight_decay=self._weight_decay,
-        #     weight_decay_ignores=self._weight_decay_ignores,
-        #     damp=s_train_damp,
-        #     scale=s_train_scale,
-        #     num_samples=s_train_num_samples,
-        # )
-        with torch.no_grad():
-            # Original
-            influence = [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
-            # RelatIF edit 1
-            # influence = [
-            #     -torch.sum(
-            #         (x * y).div((x * y).norm(p=2, dim=-1, keepdim=True))
-            #     )
-            #     for x, y in zip(grad_z, s_test)
-            # ]
-            # RelatIF edit 2
-            influence = torch.tensor(influence)
-            influence = influence.div(
-                influence.norm(p=2, dim=-1, keepdim=True)
+        if self._relat_if == "full":
+            dataset = SimpleDataset(Xs)
+            dataloader = misc_utils.get_dataloader(
+                dataset=dataset,
+                batch_size=1,
+                random=False,
+                data_collator=data_collator,
             )
+            s_train = nn_influence_utils.compute_s_test(
+                n_gpu=self._n_gpu,
+                device=device,
+                model=self.model,
+                test_inputs=X,
+                train_data_loaders=[dataloader],
+                params_filter=self._params_filter,
+                weight_decay=self._weight_decay,
+                weight_decay_ignores=self._weight_decay_ignores,
+                damp=s_train_damp,
+                scale=s_train_scale,
+                num_samples=s_train_num_samples,
+            )
+        if self._relat_if not in [None, "inner", "outer", "full"]:
+            raise ValueError(
+                f"`relat_if` should be 'inner', 'outer', 'full' or 'None', but is {self._relat_if}"
+            )
+        with torch.no_grad():
+            # RelatIF edit 1
+            if self._relat_if == "inner":
+                influence = [
+                    -torch.sum(
+                        (x * y).div((x * y).norm(p=2, dim=-1, keepdim=True))
+                    )
+                    for x, y in zip(grad_z, s_test)
+                ]
+            # RelatIF edit 2
+            elif self._relat_if == "outer":
+                influence = torch.tensor(
+                    [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
+                )
+                influence = influence.div(
+                    influence.norm(p=2, dim=-1, keepdim=True)
+                )
             # Proper RelatIF
-            # influence = torch.tensor(
-            #     [
-            #         -torch.sum(x * y).div(z.norm(p=2, keepdim=False))
-            #         for x, y, z in zip(grad_z, s_test, s_train)
-            #     ]
-            # )
+            elif self._relat_if == "full":
+                influence = [
+                    -torch.sum(x * y).div(z.norm(p=2, keepdim=False))
+                    for x, y, z in zip(grad_z, s_test, s_train)
+                ]
+            else:
+                # Original
+                influence = [-torch.sum(x * y) for x, y in zip(grad_z, s_test)]
+
         return sum(influence)
 
     def forward(

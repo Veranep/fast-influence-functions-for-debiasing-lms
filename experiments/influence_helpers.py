@@ -153,6 +153,7 @@ def compute_influences_simplified(
     device_ids: Optional[List[int]] = None,
     precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
     faiss_index_use_mean_features_as_query: bool = False,
+    relat_if: Optional[str] = None,
 ) -> Dict[int, float]:
 
     # Make sure indices are sorted according to distances
@@ -250,6 +251,7 @@ def compute_influences_simplified(
             train_indices_to_include=KNN_indices,
             return_s_test=False,
             debug=False,
+            relat_if=relat_if,
         )
 
     return influences, train_inputs_collections
