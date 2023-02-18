@@ -5,6 +5,7 @@
 
 import torch
 import numpy as np
+import pickle
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 from typing import Dict, List, Union, Optional, Tuple, Iterator, Any

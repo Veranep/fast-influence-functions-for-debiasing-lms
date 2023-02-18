@@ -149,6 +149,8 @@ def compute_influences_simplified(
     s_test_scale: float,
     s_test_num_samples: int,
     weight_decay: float,
+    params_filter: List[torch.FloatTensor],
+    dim: int = 768,
     data_collator=None,
     device_ids: Optional[List[int]] = None,
     precomputed_s_test: Optional[List[torch.FloatTensor]] = None,
@@ -161,10 +163,6 @@ def compute_influences_simplified(
     #     KNN_indices.squeeze(axis=0)[
     #         np.argsort(KNN_distances.squeeze(axis=0))
     #     ] != KNN_indices)]
-
-    params_filter = [
-        n for n, p in model.named_parameters() if not p.requires_grad
-    ]
 
     weight_decay_ignores = ["bias", "LayerNorm.weight"] + [
         n for n, p in model.named_parameters() if not p.requires_grad
@@ -181,6 +179,8 @@ def compute_influences_simplified(
             inputs["token_type_ids"],
         )
         features = features.cpu().detach().numpy()
+        if dim == 1536:
+            features = features.reshape(-1, dim)
 
         if faiss_index_use_mean_features_as_query is True:
             # We use the mean embedding as the final query here

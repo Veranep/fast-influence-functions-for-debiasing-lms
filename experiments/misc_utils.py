@@ -90,9 +90,9 @@ def compute_BERT_CLS_feature(
         raise ValueError
 
     outputs = model.bert(
-        input_ids,
-        attention_mask=attention_mask,
-        token_type_ids=token_type_ids,
+        input_ids.reshape([-1, input_ids.shape[-1]]),
+        attention_mask=attention_mask.reshape([-1, attention_mask.shape[-1]]),
+        token_type_ids=token_type_ids.reshape([-1, token_type_ids.shape[-1]]),
     )
     output = outputs[0][:, -1, :]
     return output
