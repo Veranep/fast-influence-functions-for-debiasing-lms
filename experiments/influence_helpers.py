@@ -172,12 +172,7 @@ def compute_influences_simplified(
         device = torch.device("cuda")
         for i, v in inputs.items():
             inputs[i] = v.to(device)
-        features = misc_utils.compute_BERT_CLS_feature(
-            model,
-            inputs["input_ids"],
-            inputs["attention_mask"],
-            inputs["token_type_ids"],
-        )
+        features = misc_utils.compute_BERT_CLS_feature(model, **inputs)
         features = features.cpu().detach().numpy()
         if dim == 1536:
             features = features.reshape(-1, dim)
