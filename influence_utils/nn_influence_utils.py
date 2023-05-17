@@ -34,12 +34,19 @@ def get_loss_with_weight_decay(
     # model.train()
     # id
     i = False
+    d = False
     if "id" in inputs:
         id = inputs.pop("id")
         i = True
+    if "domains" in inputs:
+        domains = inputs.pop("domains")
+        d = True
 
     for k, v in inputs.items():
-        if len(v.shape) > 2:
+        if (
+            len(v.shape) > 2
+            and len(model.dummy_inputs["input_ids"].shape) == 1
+        ):
             v = v.squeeze(dim=0)
         inputs[k] = v.to(device)
 
@@ -48,6 +55,8 @@ def get_loss_with_weight_decay(
     # id
     if i:
         inputs["id"] = id
+    if d:
+        inputs["domains"] = domains
 
     # model outputs are always tuple in transformers (see doc)
     if n_gpu > 1:

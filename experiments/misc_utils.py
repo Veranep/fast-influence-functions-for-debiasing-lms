@@ -89,7 +89,7 @@ def compute_BERT_CLS_feature(
     """
     if model.training is True:
         raise ValueError
-    try:
+    if hasattr(model, "bert"):
         outputs = model.bert(
             input_ids.reshape([-1, input_ids.shape[-1]]),
             attention_mask=attention_mask.reshape(
@@ -99,8 +99,29 @@ def compute_BERT_CLS_feature(
                 [-1, token_type_ids.shape[-1]]
             ),
         )
-    except:
+    elif hasattr(model, "distilbert"):
+        outputs = model.distilbert(
+            input_ids.reshape([-1, input_ids.shape[-1]]),
+            attention_mask=attention_mask.reshape(
+                [-1, attention_mask.shape[-1]]
+            ),
+        )
+    elif hasattr(model, "roberta"):
         outputs = model.roberta(
+            input_ids.reshape([-1, input_ids.shape[-1]]),
+            attention_mask=attention_mask.reshape(
+                [-1, attention_mask.shape[-1]]
+            ),
+        )
+    elif hasattr(model, "deberta"):
+        outputs = model.deberta(
+            input_ids.reshape([-1, input_ids.shape[-1]]),
+            attention_mask=attention_mask.reshape(
+                [-1, attention_mask.shape[-1]]
+            ),
+        )
+    else:
+        outputs = model.model.encoder(
             input_ids.reshape([-1, input_ids.shape[-1]]),
             attention_mask=attention_mask.reshape(
                 [-1, attention_mask.shape[-1]]

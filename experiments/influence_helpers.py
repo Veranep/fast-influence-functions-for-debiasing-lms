@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 
+import numpy as np
 import torch
 from influence_utils import faiss_utils
 from typing import List, Dict, Tuple, Optional, Union, Any
@@ -170,12 +171,31 @@ def compute_influences_simplified(
 
     if faiss_index is not None:
         device = torch.device("cuda")
+        to_pop = []
         for i, v in inputs.items():
-            inputs[i] = v.to(device)
+            if i in [
+                "input_ids",
+                "attention_mask",
+                "token_type_ids",
+                "labels",
+            ]:
+                try:
+                    inputs[i] = v.to(device)
+                except:
+                    inputs[i] = torch.tensor(v).unsqueeze(0).to(device)
+            else:
+                to_pop.append(i)
+        for i in to_pop:
+            inputs.pop(i)
         features = misc_utils.compute_BERT_CLS_feature(model, **inputs)
         features = features.cpu().detach().numpy()
-        if dim == 1536:
-            features = features.reshape(-1, dim)
+        if dim in [1536, 2304, 3072, 4096]:
+            try:
+                features = features.reshape(-1, dim)
+            except:
+                new_features = np.zeros([1, dim])
+                new_features[:, : np.prod(features.shape)] = features.flatten()
+                features = new_features
 
         if faiss_index_use_mean_features_as_query is True:
             # We use the mean embedding as the final query here
